@@ -155,6 +155,7 @@
         <option value="custom">Custom (edit query below)</option>
         <option value="latency" selected>Latency — per conversation thread</option>
         <option value="steps">Time between each step</option>
+        <option value="exectime">Execution time — Generative Answers node</option>
       </select>
     </div>
     <div class="field">
@@ -314,6 +315,43 @@ ${conv}| extend ParentConversationId = tostring(substring(ConversationId, 0, 36)
 | extend PrevMessage = iff(ParentConversationId == PrevParent and ChildConversationId == PrevChild, PrevMessage, "")
 | project EventTime, ParentConversationId, ChildConversationId, PrevStep, PrevMessage, CurrentStep = Step, Message, TimeSincePrevStep_ms
 | order by EventTime asc`;
+  } else if (type === 'exectime') {
+    queryTextEl.value =
+`customEvents
+| where timestamp ${tf}
+| extend ConversationId = tostring(customDimensions.conversationId)
+| where isnotempty(ConversationId)
+${conv}| extend EventTime = todatetime(timestamp)
+| extend Kind = tostring(customDimensions.Kind)
+| extend ActionId = tostring(customDimensions.ActionId)
+| extend TopicName = tostring(customDimensions.TopicName)
+| sort by ConversationId asc, EventTime asc
+| extend PrevKind = prev(Kind), PrevConv = tostring(prev(ConversationId)), PrevTime = todatetime(prev(EventTime))
+| extend NextKind = next(Kind), NextConv = tostring(next(ConversationId)), NextTime = todatetime(next(EventTime))
+| extend IsBlockStart = iff(Kind == "SearchAndSummarizeContent" and (PrevKind != "SearchAndSummarizeContent" or PrevConv != ConversationId), 1, 0)
+| extend IsBlockEnd   = iff(Kind == "SearchAndSummarizeContent" and (NextKind != "SearchAndSummarizeContent" or NextConv != ConversationId), 1, 0)
+| extend BlockGroupId = row_cumsum(IsBlockStart)
+| where Kind == "SearchAndSummarizeContent"
+| extend ActivityBeforeTime = iff(IsBlockStart == 1, PrevTime, datetime(null))
+| extend ActivityAfterTime  = iff(IsBlockEnd == 1, NextTime, datetime(null))
+| summarize
+    ActivityBeforeTime = max(ActivityBeforeTime),
+    ActivityAfterTime  = max(ActivityAfterTime),
+    NodeStartTime = min(EventTime),
+    NodeEndTime   = max(EventTime),
+    TopicName = any(TopicName),
+    ActionId  = any(ActionId)
+  by ConversationId, BlockGroupId
+| extend ExecutionTime_ms  = toint(datetime_diff('millisecond', ActivityAfterTime, ActivityBeforeTime))
+| extend ExecutionTime_sec = round(todouble(ExecutionTime_ms) / 1000, 2)
+| extend PerformanceBucket = case(
+    ExecutionTime_sec < 3,  "Under 3 sec",
+    ExecutionTime_sec < 5,  "3-5 sec",
+    ExecutionTime_sec < 10, "5-10 sec",
+    ExecutionTime_sec < 15, "10-15 sec",
+    "15+ sec")
+| project ConversationId, TopicName, ActionId, ActivityBeforeTime, ActivityAfterTime, ExecutionTime_ms, ExecutionTime_sec, PerformanceBucket
+| order by ActivityBeforeTime asc`;
   }
 }
 

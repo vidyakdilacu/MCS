@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>App Insights Log Viewer</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --border: #d9dce1;
+    --text: #1f2328;
+    --muted: #5b6472;
+    --accent: #185fa5;
+    --accent-dark: #0c447c;
+    --danger: #a32d2d;
+    --mono: 'Consolas', 'SF Mono', Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-size: 14px;
+  }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 12px;
+    font-weight: 500;
+  }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .row:last-child { margin-bottom: 0; }
+  .field { flex: 1 1 220px; min-width: 200px; }
+  .field label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  input[type=text], input[type=password], input[type=datetime-local], select, textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--text);
+  }
+  textarea {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    min-height: 140px;
+    resize: vertical;
+    white-space: pre;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(24,95,165,0.15);
+  }
+  .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn:hover { background: #f0f1f3; }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 500;
+  }
+  .btn-primary:hover { background: var(--accent-dark); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .status { font-size: 12.5px; color: var(--muted); }
+  .status.error { color: var(--danger); }
+  #resultsWrap { overflow: auto; max-height: 560px; border: 1px solid var(--border); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  thead th {
+    position: sticky; top: 0;
+    background: #eef0f3;
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #eceef1;
+    white-space: nowrap;
+    max-width: 340px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  tbody tr:hover { background: #f7f8fa; }
+  .meta-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .custom-range { display: none; }
+  .custom-range.show { display: flex; }
+</style>
+</head>
+<body>
+
+<h1>App Insights log viewer</h1>
+<p class="subtitle">Query Application Insights logs directly from the browser via the Application Insights Data Access REST API.</p>
+
+<div class="card">
+  <h2>Connection</h2>
+  <div class="row">
+    <div class="field" style="flex: 2 1 360px;">
+      <label for="connString">Connection string</label>
+      <input type="text" id="connString" placeholder="InstrumentationKey=...;IngestionEndpoint=...;ApplicationId=...">
+      <div class="hint">If your connection string includes <code>ApplicationId=</code>, the app ID below fills in automatically. Otherwise enter it manually — find both under your resource's <strong>API Access</strong> blade.</div>
+    </div>
+    <div class="field">
+      <label for="appId">Application ID</label>
+      <input type="text" id="appId" placeholder="e.g. 3f1b2c4d-...">
+    </div>
+    <div class="field">
+      <label for="apiKey">API key</label>
+      <input type="password" id="apiKey" placeholder="API key (API Access blade)">
+      <div class="hint">Required for querying — the connection string alone can't authenticate reads.</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Query builder</h2>
+  <div class="row">
+    <div class="field">
+      <label for="queryType">Query type</label>
+      <select id="queryType">
+        <option value="custom">Custom (edit query below)</option>
+        <option value="latency" selected>Latency — per conversation thread</option>
+        <option value="steps">Time between each step</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="convId">Conversation ID (optional)</label>
+      <input type="text" id="convId" placeholder="leave blank to show all">
+    </div>
+    <div class="field">
+      <label for="timeRange">Time range</label>
+      <select id="timeRange">
+        <option value="PT1H">Last 1 hour</option>
+        <option value="PT6H">Last 6 hours</option>
+        <option value="P1D" selected>Last 24 hours</option>
+        <option value="P7D">Last 7 days</option>
+        <option value="P30D">Last 30 days</option>
+        <option value="custom">Custom range</option>
+      </select>
+    </div>
+  </div>
+  <div class="row custom-range" id="customRangeRow">
+    <div class="field">
+      <label for="startTime">Start</label>
+      <input type="datetime-local" id="startTime">
+    </div>
+    <div class="field">
+      <label for="endTime">End</label>
+      <input type="datetime-local" id="endTime">
+    </div>
+  </div>
+  <div class="row">
+    <div class="field" style="flex: 1 1 100%;">
+      <label for="queryText">KQL query (paste your own, or generated from the query type above — editable either way)</label>
+      <textarea id="queryText" spellcheck="false"></textarea>
+      <div class="hint">Generated templates read <code>customDimensions.conversationId</code> from <code>customEvents</code> (events: <code>BotMessageReceived</code> / <code>BotMessageSend</code>), split it into a 36-char parent ID and a child ID suffix, and filter with <code>startswith</code> so either a parent-only or full parent+child ID matches.</div>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-primary" id="runBtn">Run query</button>
+    <button class="btn" id="csvBtn" disabled>Download CSV</button>
+    <span class="status" id="statusMsg"></span>
+  </div>
+</div>
+
+<div class="card" id="resultsCard" style="display:none;">
+  <div class="meta-row">
+    <h2 style="margin:0;">Results</h2>
+    <span class="hint" id="rowCount"></span>
+  </div>
+  <div id="resultsWrap"><table id="resultsTable"></table></div>
+</div>
+
+<script>
+const connStringEl = document.getElementById('connString');
+const appIdEl = document.getElementById('appId');
+const apiKeyEl = document.getElementById('apiKey');
+const queryTypeEl = document.getElementById('queryType');
+const convIdEl = document.getElementById('convId');
+const timeRangeEl = document.getElementById('timeRange');
+const customRangeRow = document.getElementById('customRangeRow');
+const startTimeEl = document.getElementById('startTime');
+const endTimeEl = document.getElementById('endTime');
+const queryTextEl = document.getElementById('queryText');
+const runBtn = document.getElementById('runBtn');
+const csvBtn = document.getElementById('csvBtn');
+const statusMsg = document.getElementById('statusMsg');
+const resultsCard = document.getElementById('resultsCard');
+const resultsTable = document.getElementById('resultsTable');
+const rowCount = document.getElementById('rowCount');
+
+let lastColumns = null;
+let lastRows = null;
+
+connStringEl.addEventListener('input', () => {
+  const m = connStringEl.value.match(/ApplicationId=([^;]+)/i);
+  if (m) appIdEl.value = m[1].trim();
+});
+
+timeRangeEl.addEventListener('change', () => {
+  customRangeRow.classList.toggle('show', timeRangeEl.value === 'custom');
+  buildQuery();
+});
+queryTypeEl.addEventListener('change', buildQuery);
+convIdEl.addEventListener('input', buildQuery);
+startTimeEl.addEventListener('change', buildQuery);
+endTimeEl.addEventListener('change', buildQuery);
+
+function timeFilterClause() {
+  if (timeRangeEl.value === 'custom') {
+    const s = startTimeEl.value, e = endTimeEl.value;
+    if (s && e) return `between (datetime(${s}) .. datetime(${e}))`;
+    return `> ago(1d)`;
+  }
+  const map = { PT1H: '1h', PT6H: '6h', P1D: '1d', P7D: '7d', P30D: '30d' };
+  return `> ago(${map[timeRangeEl.value] || '1d'})`;
+}
+
+function convClause() {
+  const id = convIdEl.value.trim();
+  if (!id) return '';
+  const esc = id.replace(/'/g, "\\'");
+  return `| where ConversationId startswith '${esc}'\n`;
+}
+
+function buildQuery() {
+  const type = queryTypeEl.value;
+  if (type === 'custom') return;
+  const tf = timeFilterClause();
+  const conv = convClause();
+
+  if (type === 'latency') {
+    queryTextEl.value =
+`let Messages = customEvents
+| where timestamp ${tf}
+| where name in ("BotMessageReceived", "BotMessageSend")
+| extend ConversationId = tostring(customDimensions.conversationId)
+| where isnotempty(ConversationId)
+${conv}| extend ParentConversationId = tostring(substring(ConversationId, 0, 36))
+| extend ChildConversationId  = tostring(iff(strlen(ConversationId) > 36, substring(ConversationId, 36), ""))
+| extend Direction    = iff(name == "BotMessageReceived", "Incoming (User)", "Outgoing (Bot)")
+| extend MessageText  = tostring(customDimensions.text)
+| extend ActivityId   = tostring(customDimensions.activityId)
+| extend ReplyActivityId = tostring(customDimensions.replyActivityId)
+| extend EventTime    = todatetime(timestamp);
+let ThreadBounds = Messages
+| summarize FirstEventTime = min(EventTime), LastEventTime = max(EventTime) by ParentConversationId, ChildConversationId;
+Messages
+| join kind=inner ThreadBounds on ParentConversationId, ChildConversationId
+| sort by ParentConversationId asc, ChildConversationId asc, EventTime asc
+| extend PrevTime = todatetime(prev(EventTime)), PrevParent = tostring(prev(ParentConversationId)), PrevChild = tostring(prev(ChildConversationId))
+| extend SameThread = ParentConversationId == PrevParent and ChildConversationId == PrevChild
+| extend TimeFromLastMessage_sec = iff(SameThread, toint(datetime_diff('second', EventTime, PrevTime)), int(null))
+| extend OverallTime_sec = toint(datetime_diff('second', EventTime, FirstEventTime))
+| extend IsLastMessage = iff(EventTime == LastEventTime, "True", "False")
+| project EventTime, ParentConversationId, ChildConversationId, Direction, MessageText,
+    ActivityId, ReplyActivityId, TimeFromLastMessage_sec, OverallTime_sec, IsLastMessage
+| order by ParentConversationId asc, ChildConversationId asc, EventTime asc`;
+  } else if (type === 'steps') {
+    queryTextEl.value =
+`customEvents
+| where timestamp ${tf}
+| extend ConversationId = tostring(customDimensions.conversationId)
+| where isnotempty(ConversationId)
+${conv}| extend ParentConversationId = tostring(substring(ConversationId, 0, 36))
+| extend ChildConversationId  = tostring(iff(strlen(ConversationId) > 36, substring(ConversationId, 36), ""))
+| extend TopicName = tostring(customDimensions.TopicName)
+| extend Kind = tostring(customDimensions.Kind)
+| extend Message = iff(name in ("BotMessageReceived", "BotMessageSend"), tostring(customDimensions.text), "")
+| extend Step = strcat(name,
+    iff(isnotempty(TopicName), strcat(" | ", TopicName), ""),
+    iff(isnotempty(Kind), strcat(" (", Kind, ")"), ""))
+| extend EventTime = todatetime(timestamp)
+| sort by ParentConversationId asc, ChildConversationId asc, EventTime asc
+| extend PrevTimestamp = todatetime(prev(EventTime)), PrevParent = tostring(prev(ParentConversationId)), PrevChild = tostring(prev(ChildConversationId))
+| extend PrevStep = tostring(prev(Step)), PrevMessage = tostring(prev(Message))
+| extend TimeSincePrevStep_ms = iff(ParentConversationId == PrevParent and ChildConversationId == PrevChild,
+    toint(datetime_diff('second', EventTime, PrevTimestamp)), int(null))
+| extend PrevStep = iff(ParentConversationId == PrevParent and ChildConversationId == PrevChild, PrevStep, "")
+| extend PrevMessage = iff(ParentConversationId == PrevParent and ChildConversationId == PrevChild, PrevMessage, "")
+| project EventTime, ParentConversationId, ChildConversationId, PrevStep, PrevMessage, CurrentStep = Step, Message, TimeSincePrevStep_ms
+| order by EventTime asc`;
+  }
+}
+
+buildQuery();
+
+function setStatus(msg, isError) {
+  statusMsg.textContent = msg;
+  statusMsg.className = 'status' + (isError ? ' error' : '');
+}
+
+runBtn.addEventListener('click', async () => {
+  const appId = appIdEl.value.trim();
+  const apiKey = apiKeyEl.value.trim();
+  const query = queryTextEl.value.trim();
+
+  if (!appId || !apiKey) {
+    setStatus('Enter Application ID and API key first.', true);
+    return;
+  }
+  if (!query) {
+    setStatus('Query is empty.', true);
+    return;
+  }
+
+  runBtn.disabled = true;
+  csvBtn.disabled = true;
+  setStatus('Running query...', false);
+  resultsCard.style.display = 'none';
+
+  try {
+    const url = `https://api.applicationinsights.io/v1/apps/${encodeURIComponent(appId)}/query`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ query })
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
+    }
+
+    const data = await resp.json();
+    const table = data.tables && data.tables[0];
+    if (!table) {
+      setStatus('Query succeeded but returned no table.', false);
+      return;
+    }
+
+    lastColumns = table.columns.map(c => c.name);
+    lastRows = table.rows;
+    renderResults(lastColumns, lastRows);
+    setStatus(`Done — ${lastRows.length} row(s).`, false);
+    csvBtn.disabled = lastRows.length === 0;
+  } catch (err) {
+    setStatus('Error: ' + err.message + ' — if this is a CORS or 401/403 failure, the resource may require Azure AD auth instead of a legacy API key, or the key may lack read scope.', true);
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+
+function renderResults(columns, rows) {
+  resultsCard.style.display = 'block';
+  rowCount.textContent = `${rows.length} row(s), ${columns.length} column(s)`;
+  let html = '<thead><tr>' + columns.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead>';
+  html += '<tbody>' + rows.map(r =>
+    '<tr>' + r.map(v => `<td title="${escapeHtml(String(v))}">${escapeHtml(String(v))}</td>`).join('') + '</tr>'
+  ).join('') + '</tbody>';
+  resultsTable.innerHTML = html;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+csvBtn.addEventListener('click', () => {
+  if (!lastColumns || !lastRows) return;
+  const csvRows = [lastColumns.map(csvEscape).join(',')];
+  for (const r of lastRows) {
+    csvRows.push(r.map(v => csvEscape(String(v))).join(','));
+  }
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  a.href = url;
+  a.download = `appinsights-logs-${ts}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+function csvEscape(v) {
+  if (/[",\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+  return v;
+}
+</script>
+</body>
+</html>

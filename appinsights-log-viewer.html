@@ -100,12 +100,21 @@
   #resultsWrap { overflow: auto; max-height: 560px; border: 1px solid var(--border); border-radius: 6px; }
   table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
   thead th {
-    position: sticky; top: 0;
+    position: sticky;
     background: #eef0f3;
     text-align: left;
     padding: 7px 10px;
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
+  }
+  thead tr:first-child th { top: 0; z-index: 2; }
+  thead tr.filter-row th { top: 31px; z-index: 2; padding: 4px 6px; background: #e4e7eb; }
+  thead tr.filter-row input {
+    width: 100%;
+    padding: 4px 6px;
+    font-size: 11.5px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
   }
   tbody td {
     padding: 6px 10px;
@@ -116,7 +125,8 @@
     text-overflow: ellipsis;
   }
   tbody tr:hover { background: #f7f8fa; }
-  .meta-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .meta-row { display: flex; justify-content: flex-start; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .meta-row #rowCount { margin-left: auto; }
   .custom-range { display: none; }
   .custom-range.show { display: flex; }
 </style>
@@ -201,6 +211,8 @@
 <div class="card" id="resultsCard" style="display:none;">
   <div class="meta-row">
     <h2 style="margin:0;">Results</h2>
+    <input type="text" id="globalFilter" placeholder="Filter all columns..." style="max-width:220px; padding:6px 8px; font-size:12.5px; border:1px solid var(--border); border-radius:6px;">
+    <button class="btn" id="clearFilterBtn" style="padding:6px 10px; font-size:12px;">Clear filters</button>
     <span class="hint" id="rowCount"></span>
   </div>
   <div id="resultsWrap"><table id="resultsTable"></table></div>
@@ -223,9 +235,13 @@ const statusMsg = document.getElementById('statusMsg');
 const resultsCard = document.getElementById('resultsCard');
 const resultsTable = document.getElementById('resultsTable');
 const rowCount = document.getElementById('rowCount');
+const globalFilterEl = document.getElementById('globalFilter');
+const clearFilterBtn = document.getElementById('clearFilterBtn');
 
 let lastColumns = null;
 let lastRows = null;
+let filteredRows = null;
+let columnFilters = [];
 
 connStringEl.addEventListener('input', () => {
   const m = connStringEl.value.match(/ApplicationId=([^;]+)/i);
@@ -408,7 +424,6 @@ runBtn.addEventListener('click', async () => {
     lastRows = table.rows;
     renderResults(lastColumns, lastRows);
     setStatus(`Done — ${lastRows.length} row(s).`, false);
-    csvBtn.disabled = lastRows.length === 0;
   } catch (err) {
     setStatus('Error: ' + err.message + ' — if this is a CORS or 401/403 failure, the resource may require Azure AD auth instead of a legacy API key, or the key may lack read scope.', true);
   } finally {
@@ -418,22 +433,68 @@ runBtn.addEventListener('click', async () => {
 
 function renderResults(columns, rows) {
   resultsCard.style.display = 'block';
-  rowCount.textContent = `${rows.length} row(s), ${columns.length} column(s)`;
-  let html = '<thead><tr>' + columns.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead>';
-  html += '<tbody>' + rows.map(r =>
-    '<tr>' + r.map(v => `<td title="${escapeHtml(String(v))}">${escapeHtml(String(v))}</td>`).join('') + '</tr>'
-  ).join('') + '</tbody>';
-  resultsTable.innerHTML = html;
+  lastColumns = columns;
+  lastRows = rows;
+  columnFilters = new Array(columns.length).fill('');
+  globalFilterEl.value = '';
+  buildTableHead(columns);
+  applyFilters();
 }
+
+function buildTableHead(columns) {
+  let head = '<thead><tr>' + columns.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr>';
+  head += '<tr class="filter-row">' + columns.map((c, i) =>
+    `<th><input type="text" class="col-filter" data-idx="${i}" placeholder="Filter ${escapeHtml(c)}"></th>`
+  ).join('') + '</tr></thead><tbody></tbody>';
+  resultsTable.innerHTML = head;
+  resultsTable.querySelectorAll('.col-filter').forEach(inp => {
+    inp.addEventListener('input', () => {
+      columnFilters[+inp.dataset.idx] = inp.value.toLowerCase();
+      applyFilters();
+    });
+  });
+}
+
+function applyFilters() {
+  if (!lastRows) return;
+  const global = globalFilterEl.value.toLowerCase();
+  filteredRows = lastRows.filter(r => {
+    if (global && !r.some(v => String(v).toLowerCase().includes(global))) return false;
+    for (let i = 0; i < columnFilters.length; i++) {
+      if (columnFilters[i] && !String(r[i]).toLowerCase().includes(columnFilters[i])) return false;
+    }
+    return true;
+  });
+  renderBody(filteredRows);
+  rowCount.textContent = filteredRows.length === lastRows.length
+    ? `${lastRows.length} row(s), ${lastColumns.length} column(s)`
+    : `${filteredRows.length} of ${lastRows.length} row(s), ${lastColumns.length} column(s)`;
+  csvBtn.disabled = filteredRows.length === 0;
+}
+
+function renderBody(rows) {
+  const tbody = resultsTable.querySelector('tbody');
+  tbody.innerHTML = rows.map(r =>
+    '<tr>' + r.map(v => `<td title="${escapeHtml(String(v))}">${escapeHtml(String(v))}</td>`).join('') + '</tr>'
+  ).join('');
+}
+
+globalFilterEl.addEventListener('input', applyFilters);
+clearFilterBtn.addEventListener('click', () => {
+  globalFilterEl.value = '';
+  columnFilters = columnFilters.map(() => '');
+  resultsTable.querySelectorAll('.col-filter').forEach(inp => inp.value = '');
+  applyFilters();
+});
 
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 csvBtn.addEventListener('click', () => {
-  if (!lastColumns || !lastRows) return;
+  if (!lastColumns || !filteredRows) return;
   const csvRows = [lastColumns.map(csvEscape).join(',')];
-  for (const r of lastRows) {
+  for (const r of filteredRows) {
     csvRows.push(r.map(v => csvEscape(String(v))).join(','));
   }
   const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
